@@ -14,6 +14,13 @@ use std::sync::{Arc, Mutex};
 static SERVER_COUNTER: AtomicUsize = AtomicUsize::new(0);
 const LOG_FORMAT: &'static str = r#""%r" %s %b "%{User-Agent}i" %D"#;
 
+#[derive(Serialize)]
+struct LookupResponse {
+    server_id: usize,
+    request_count: usize,
+    result: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct PostInput {
     message: String,
@@ -31,7 +38,7 @@ struct IndexResponse {
     request_count: usize,
     messages: Vec<String>,
 }
-#[derive(Debug)]
+
 struct AppState {
     server_id: usize,
     request_count: Cell<usize>,
@@ -43,6 +50,19 @@ struct PostError {
     server_id: usize,
     request_count: usize,
     error: String,
+}
+
+#[get("/lookup/{index}")]
+fn lookup(state: web::Data<AppState>, idx: web::Path<usize>) -> Result<web::Json<LookupResponse>> {
+    let request_count = state.request_count.get() + 1;
+    state.request_count.set(request_count);
+    let ms = state.messages.lock().unwrap();
+    let result = ms.get(idx.into_inner()).cloned();
+    Ok(web::Json(LookupResponse {
+        server_id: state.server_id,
+        request_count,
+        result,
+    }))
 }
 
 fn post_error(err: JsonPayloadError, req: &HttpRequest) -> Error {
@@ -132,6 +152,7 @@ impl MessageApp {
                         .route(web::post().to(post)),
                 )
                 .service(clear)
+                .service(lookup)
         })
         .bind(("127.0.0.1", self.port))?
         .workers(8)
